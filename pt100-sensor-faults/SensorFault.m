@@ -7,31 +7,32 @@ data = readtable(filePath);
 
 % Extract values and labels
 values = data.Value;
-labels = zeros(size(values));
+labels = categorical(repmat("N", size(values)));
 
+% Combine all faults into a single category 'AN' for Anomaly
 % Drift Fault Detection
 diffValues = diff(values);
 driftThreshold = mean(diffValues) + 3 * std(diffValues);
 isDrift = [false; abs(diffValues) > driftThreshold];
-labels(isDrift) = 1;
+labels(isDrift) = 'AN';
 
 % Bias Fault Detection
 baselineValue = 25;
 biasThreshold = 5;
 isBias = abs(values - baselineValue) > biasThreshold;
-labels(isBias) = 2;
+labels(isBias) = 'AN';
 
 % Precision Degradation Fault Detection
 windowSize = 50;
 rollingVar = movvar(values, windowSize);
 precisionThreshold = 2 * var(values);
 isPrecisionDegradation = rollingVar > precisionThreshold;
-labels(isPrecisionDegradation) = 3;
+labels(isPrecisionDegradation) = 'AN';
 
 % Spike Fault Detection
 spikeThreshold = mean(values) + 5 * std(values);
 isSpike = abs(values - mean(values)) > spikeThreshold;
-labels(isSpike) = 4;
+labels(isSpike) = 'AN';
 
 % Stuck Fault Detection
 stuckDuration = 100;
@@ -41,7 +42,7 @@ for i = 1:length(values) - stuckDuration
         isStuck(i:i+stuckDuration-1) = true;
     end
 end
-labels(isStuck) = 5;
+labels(isStuck) = 'AN';
 
 % Create a table with values and labels
 labeledData = table(values, labels);
@@ -60,14 +61,6 @@ end
 
 % Convert labels to categorical
 newLabels = categorical(newLabels);
-
-% Ensure all classes are present in the training set
-allClasses = categorical(0:5); % Include all classes
-missingClasses = setdiff(allClasses, unique(newLabels)); % Find missing classes
-for i = 1:numel(missingClasses)
-    features = [features; zeros(1, windowSize)];  % Add dummy feature vector
-    newLabels = [newLabels; missingClasses(i)];  % Add missing class label
-end
 
 % Save the processed features and labels to a file
 processedData = table(features, newLabels);
@@ -101,18 +94,20 @@ trainFeatures = reshape(trainFeatures', [1, windowSize, 1, size(trainFeatures, 1
 valFeatures = reshape(valFeatures', [1, windowSize, 1, size(valFeatures, 1)]);
 testFeatures = reshape(testFeatures', [1, windowSize, 1, size(testFeatures, 1)]);
 
-% Define the CNN layers
+% Define the CNN layers with dropout layers to reduce overfitting
 layers = [
     imageInputLayer([1 windowSize 1], 'Name', 'input')
     convolution2dLayer([1 3], 16, 'Padding', 'same', 'Name', 'conv1')
     batchNormalizationLayer('Name', 'batchnorm1')
     reluLayer('Name', 'relu1')
     maxPooling2dLayer([1 2], 'Stride', [1 2], 'Name', 'maxpool1')
+    dropoutLayer(0.2, 'Name', 'dropout1')
     convolution2dLayer([1 3], 32, 'Padding', 'same', 'Name', 'conv2')
     batchNormalizationLayer('Name', 'batchnorm2')
     reluLayer('Name', 'relu2')
     maxPooling2dLayer([1 2], 'Stride', [1 2], 'Name', 'maxpool2')
-    fullyConnectedLayer(6, 'Name', 'fc') % Number of classes
+    dropoutLayer(0.2, 'Name', 'dropout2')
+    fullyConnectedLayer(2, 'Name', 'fc') % Number of classes (N and AN)
     softmaxLayer('Name', 'softmax')
     classificationLayer('Name', 'output')];
 
@@ -163,3 +158,11 @@ grid on;
 
 % Save the figure
 saveas(gcf, 'training_validation_performance.png');
+
+% Confusion matrix for the test set
+figure;
+cm = confusionchart(testLabels, predictedTestLabels);
+cm.Title = 'Confusion Matrix for Test Set';
+cm.RowSummary = 'row-normalized';
+cm.ColumnSummary = 'column-normalized';
+saveas(gcf, 'confusion_matrix.png');
